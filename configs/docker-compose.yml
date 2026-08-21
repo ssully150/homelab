@@ -1,0 +1,124 @@
+version: '3.8'
+
+# ============================================================
+#  Home Lab — Docker Compose
+#  Replace all <PLACEHOLDER> values with your own before use.
+#  Never commit real keys, passwords, or auth tokens to a
+#  public repo.
+# ============================================================
+
+services:
+
+  # ----------------------------------------------------------
+  # Tailscale — Mesh VPN & Subnet Router
+  # network_mode: host is required for subnet routing to work.
+  # Without it, Tailscale can't advertise your LAN subnet to
+  # other nodes on the mesh.
+  # ----------------------------------------------------------
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: tailscale
+    hostname: thinkcentre-server
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./tailscale/state:/var/lib/tailscale
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      - TS_AUTHKEY=<YOUR_TAILSCALE_AUTH_KEY>
+      - TS_ROUTES=<YOUR_LOCAL_SUBNET>   # e.g. 192.168.x.0/24
+
+  # ----------------------------------------------------------
+  # Jellyfin — Self-Hosted Media Server
+  # Intel iGPU (i5-6500T) passed through for hardware
+  # transcoding via /dev/dri device passthrough.
+  # ----------------------------------------------------------
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: jellyfin
+    restart: unless-stopped
+    ports:
+      - "8096:8096"
+    volumes:
+      - ./jellyfin/config:/config
+      - ./jellyfin/cache:/cache
+      - /mnt/media-storage:/media   # Glyph array mount point
+    devices:
+      - /dev/dri/renderD128:/dev/dri/renderD128   # Intel iGPU passthrough
+
+  # ----------------------------------------------------------
+  # MariaDB — Database backend for NextCloud
+  # ----------------------------------------------------------
+  mariadb:
+    image: mariadb:latest
+    container_name: mariadb
+    restart: unless-stopped
+    environment:
+      - MYSQL_ROOT_PASSWORD=<YOUR_ROOT_PASSWORD>
+      - MYSQL_DATABASE=nextcloud
+      - MYSQL_USER=nextcloud
+      - MYSQL_PASSWORD=<YOUR_DB_PASSWORD>
+    volumes:
+      - ./mariadb/data:/var/lib/mysql
+
+  # ----------------------------------------------------------
+  # NextCloud — Self-Hosted Cloud Storage
+  # Depends on MariaDB. config.php must be updated post-deploy
+  # to add trusted domains (local IP, Tailscale IP, custom
+  # domain shortcuts).
+  # ----------------------------------------------------------
+  nextcloud:
+    image: nextcloud:latest
+    container_name: nextcloud
+    restart: unless-stopped
+    depends_on:
+      - mariadb
+    ports:
+      - "8080:80"
+    volumes:
+      - /mnt/media-storage/nextcloud:/var/www/html/data
+      - ./nextcloud/config:/var/www/html/config
+    environment:
+      - MYSQL_HOST=mariadb
+      - MYSQL_DATABASE=nextcloud
+      - MYSQL_USER=nextcloud
+      - MYSQL_PASSWORD=<YOUR_DB_PASSWORD>
+      - NEXTCLOUD_ADMIN_USER=<YOUR_ADMIN_USERNAME>
+      - NEXTCLOUD_ADMIN_PASSWORD=<YOUR_ADMIN_PASSWORD>
+
+  # ----------------------------------------------------------
+  # Wazuh SIEM — Security Monitoring & XDR
+  # Deployed from the official Wazuh production Docker repo.
+  # SSL certs are auto-generated on first run.
+  # Dashboard runs on port 8443 (moved off 443 for Nginx).
+  #
+  # NOTE: Use the official single-node compose from Wazuh docs:
+  # https://documentation.wazuh.com/current/deployment-options/docker/
+  # This is a placeholder showing port/volume intent only.
+  #
+  # REQUIRES: vm.max_map_count=262144 in /etc/sysctl.conf
+  # ----------------------------------------------------------
+  # wazuh.manager:
+  #   (use official Wazuh docker-compose — see link above)
+
+  # ----------------------------------------------------------
+  # Nginx Proxy Manager — Reverse Proxy with Web UI
+  # Routes friendly hostnames to backend containers:
+  #   jellyfin.nilbog  → Jellyfin (:8096)
+  #   cloud.nilbog     → NextCloud (:8080)
+  # Handles SSL termination via Let's Encrypt.
+  # ----------------------------------------------------------
+  nginx-proxy-manager:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: nginx-proxy-manager
+    restart: unless-stopped
+    ports:
+      - "80:80"      # HTTP
+      - "443:443"    # HTTPS (SSL termination)
+      - "81:81"      # Admin web UI
+    volumes:
+      - ./nginx-proxy-manager/data:/data
+      - ./nginx-proxy-manager/letsencrypt:/etc/letsencrypt
