@@ -423,7 +423,7 @@ sudo docker compose ps
 
 > *Photos documenting the physical build (rack, cabling, hardware, storage array) — coming soon.*
 >
-> Add photos to the `assets/` folder and embed them here:
+> Placeholder:
 > `![Rack overview](assets/rack-overview.jpg)`
 
 ---
