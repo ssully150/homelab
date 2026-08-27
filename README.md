@@ -38,26 +38,50 @@ A self-hosted home server built on consumer and prosumer hardware, running conta
 | WiFi | NetGear Nighthawk | Access point only |
 | Rack | GeekPi 8U mini rack | |
 | OS | Ubuntu Server 24.04 LTS | |
+| Managed Switch | NetGear GS308e | 8-port smart switch; dot1q VLAN port assignments |
+| DNS / Lab Host | Raspberry Pi 3B+ | Pi-hole in Docker; Wazuh agent; VLAN 20 lab segment |
 
 ---
 
 ## 2. Network Topology
 
+### 2.1 Physical Layout
+
 ```
-ISP
- └── NetGear Nighthawk (WiFi AP only)
-      └── Ubiquiti EdgeRouter X (routing)
-           └── Lenovo ThinkCentre (Ubuntu Server — static IP)
-                ├── Glyph Blackbox Pro (18.2TB RAID 1, /mnt/media-storage/)
-                ├── Docker: Tailscale (host network mode — mesh VPN + subnet router)
-                ├── Docker: Wazuh SIEM (official stack, dashboard on :8443)
-                ├── Docker: Jellyfin (iGPU passthrough for transcoding)
-                ├── Docker: NextCloud + MariaDB
-                ├── Docker: Nginx Proxy Manager (:80, :443, :81 admin)
-                └── Samba (SMB share → Windows PC on LAN)
+ISP modem
+   └── Ubiquiti EdgeRouter X eth1 and eth2
+        └──NetGear GS308e (managed switch — dot1q port assignments)
+           ├── eth1 → VLAN 1 (native, 192.168.1.0/24) — main network
+           │    ├── Lenovo ThinkCentre (Ubuntu Server — static IP)
+           │    │    ├── Glyph Blackbox Pro (18.2TB RAID 1, /mnt/media-storage/)
+           │    │    ├── Docker: Tailscale (host network — mesh VPN + subnet router)
+           │    │    ├── Docker: Wazuh SIEM (dashboard on :8443) [Wazuh agent]
+           │    │    ├── Docker: Jellyfin (iGPU passthrough)
+           │    │    ├── Docker: NextCloud + MariaDB
+           │    │    ├── Docker: Nginx Proxy Manager (:80, :443, :81)
+           │    │    └── Samba (SMB → Windows and Mac desktops on LAN)
+           │    └── Windows Desktop (custom build — VLAN 1 client)
+           └── eth2 → VLAN 20 (lab-only, 192.168.2.0/24) — isolated lab segment
+                     └── Raspberry Pi 3B+ (static IP — 192.168.2.x) [Wazuh agent]
+                          └── Docker: Pi-hole (local DNS resolver + ad filtering)
 ```
 
-**Custom local domains (via Nginx Proxy Manager):**
+### 2.2 VLAN Configuration
+
+Two VLANs segment the network between general use and lab-only traffic:
+
+| VLAN | ID | Subnet | Interface | Purpose |
+|------|----|--------|-----------|---------|
+| Main (native) | 1 | 192.168.1.0/24 | eth1 | General network — server, desktops, WiFi clients |
+| Lab | 20 | 192.168.2.0/24 | eth2 | Isolated lab segment — Raspberry Pi, lab devices |
+
+**EdgeRouter X configuration:** eth1 carries the native VLAN 1 for all general traffic. eth2 is dedicated to VLAN 20 — the lab-only segment.
+
+**GS308e configuration:** Specific switch ports assigned via dot1q tagging — VLAN 20 ports carry only lab traffic, isolating those devices from the main network. The GS308e's web interface handles port-based VLAN assignment without a CLI.
+
+**Why segment?** Keeps lab/experimental devices (Kali Pi, TryHackMe traffic, test hosts) isolated from the main network. Devices on VLAN 20 cannot reach VLAN 1 resources without explicit routing rules. ACL implementation planned to formalize inter-VLAN traffic policy.
+
+**Custom local domains (via Nginx Proxy Manager + Pi-hole local DNS):**
 - `jellyfin.<YOUR_LOCAL_DOMAIN>` → Jellyfin
 - `cloud.<YOUR_LOCAL_DOMAIN>` → NextCloud
 
@@ -377,6 +401,19 @@ sudo docker compose ps
 
 ---
 
+### Pi-hole
+
+**What it is:** Network-wide DNS resolver and ad blocker — all DNS queries from lab devices route through Pi-hole before hitting upstream resolvers.
+
+**Setup highlights:**
+- Running in Docker on a dedicated Raspberry Pi 3B+ on the VLAN 20 lab segment (192.168.2.0/24)
+- Acts as the local DNS resolver for the lab network — provides network-level filtering and full DNS query visibility across all connected devices
+- Local DNS records configured for custom domain shortcuts (e.g. `jellyfin.<YOUR_LOCAL_DOMAIN>`, `cloud.<YOUR_LOCAL_DOMAIN>`) — these resolve at the Pi-hole level across the LAN without needing external DNS or SSL certs for local access
+- Upstream resolvers configured (e.g. Cloudflare 1.1.1.1, Google 8.8.8.8) with DNS-over-HTTPS option available
+- Pi-hole Pi is also a Wazuh monitored endpoint — DNS query logs feed into centralized SIEM monitoring
+
+---
+
 ### NextCloud
 
 **What it is:** Self-hosted cloud storage — file sync across all devices, private alternative to Google Drive.
@@ -398,8 +435,11 @@ sudo docker compose ps
 - Deployed from the official Wazuh Docker production repository (not a third-party image)
 - SSL certificates auto-generated during initial deployment
 - Dashboard shifted from default port 443 to **port 8443** to clear the way for Nginx Proxy Manager on 443
-- **MacBook Pro connected as an active Wazuh agent** — sending live telemetry (process activity, file integrity events, network connections) to the dashboard
-- All lab hosts will eventually have agents installed, making this a real centralized monitoring environment
+- **Three active Wazuh agents** feeding live telemetry into the central dashboard:
+  - **Lenovo ThinkCentre** (the server itself — process activity, file integrity, Docker container events)
+  - **MacBook Pro** (network connections, process activity, file integrity events)
+  - **Raspberry Pi 3B+** (Pi-hole host — DNS events, process monitoring, system health)
+- Centralized log aggregation across all three endpoints; alerts configured for anomalous activity
 
 > Wazuh's OpenSearch indexer requires `vm.max_map_count=262144` — see [Kernel Tuning](#7-kernel-tuning).
 
@@ -423,28 +463,27 @@ sudo docker compose ps
 
 > *Photos documenting the physical build (rack, cabling, hardware, storage array) — coming soon.*
 >
-> Placeholder:
+> Add photos to the `assets/` folder and embed them here:
 > `![Rack overview](assets/rack-overview.jpg)`
 
 ---
 
 ## 12. What's Next
 
-### Immediate
+### Completed ✓
+- Jellyfin library cleanup and re-scan
+- NextCloud mobile app verified over Tailscale on cellular
+- Nginx Proxy Manager local domain shortcuts configured
+- Pi-hole deployed on Raspberry Pi 3B+ (VLAN 20); local DNS records configured
+- VLAN segmentation live: VLAN 1 (main, 192.168.1.0/24) and VLAN 20 (lab, 192.168.2.0/24)
+- Wazuh agents deployed on all three hosts: ThinkCentre, MacBook Pro, Raspberry Pi 3B+
 
-- [ ] Run cleanup script to remove sample video duplicates from media library (`find /mnt/media-storage/movies -size -100M -name "*.mkv"`)
-- [ ] Trigger deep Jellyfin library re-scan after file transfers complete
-- [ ] Verify NextCloud mobile app over cellular via Tailscale IP
-- [ ] Finish mapping Nginx proxy host shortcuts (`jellyfin.<YOUR_LOCAL_DOMAIN>`, `cloud.<YOUR_LOCAL_DOMAIN>`)
-- [ ] Add SSL certificates via Let's Encrypt through Nginx Proxy Manager
+### In Progress / Planned
 
-### Upcoming — Networking & CCNA Lab
+- [ ] **ACLs — Inter-VLAN traffic policy:** Define and implement firewall rules on the EdgeRouter X to formally control which traffic is permitted between VLAN 1 and VLAN 20. Currently evaluating what cross-VLAN access should be permitted vs. denied by default.
 
-- [ ] **Pi-hole on Raspberry Pi** — network-wide DNS filtering and local DNS record management (custom domain names resolve at the Pi-hole level across the whole LAN)
-- [ ] **EdgeRouter 4 + managed switch** — building out a proper Router-on-a-Stick architecture as new hardware arrives
-- [ ] **VLAN segmentation** — segment the network into isolated subnets:
-  - Management VLAN (servers, infrastructure)
-  - Media VLAN (Jellyfin clients, streaming devices)
-  - IoT VLAN (untrusted smart plugs, etc.)
-- [ ] **ACLs** — write firewall rules to control inter-VLAN traffic at the router
-- [ ] **Wazuh agent expansion** — deploy agents on additional hosts; pipe inter-VLAN boundary logs into Wazuh for live security monitoring and alerting
+- [ ] **SSL certificates via Let's Encrypt:** Currently using Pi-hole local DNS records to resolve custom domains on the LAN without HTTPS. SSL certs via Nginx Proxy Manager's Let's Encrypt integration would enable trusted HTTPS for local services — evaluating whether the added complexity is worthwhile for a local-only setup.
+
+- [ ] **Wazuh — expand alerting rules:** Fine-tune alert thresholds and add custom rules for lab-specific events (inter-VLAN connection attempts, Pi-hole DNS anomalies, Docker container restarts).
+
+- [ ] **CCNA lab expansion:** Add Packet Tracer / GNS3 topology files to the `ccna-labs` repo as coursework progresses.
