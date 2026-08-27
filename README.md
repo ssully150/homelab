@@ -461,9 +461,8 @@ sudo docker compose ps
 
 ## 11. Photos
 
-> *Photos documenting the physical build (rack, cabling, hardware, storage array) — coming soon.*
->
-> ![After](assets/after.jpeg)
+> ![Before](assets/before.jpeg)
+> ![and After](assets/after.jpeg)
 
 ---
 
