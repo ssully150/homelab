@@ -34,7 +34,7 @@ A self-hosted home server built on consumer and prosumer hardware, running conta
 | Server | Lenovo ThinkCentre M910q | Upgraded to 32 GB RAM |
 | CPU | Intel i5-6500T | iGPU used for Jellyfin hardware transcoding |
 | Storage | Glyph Blackbox Pro 40TB | Hardware-mirrored RAID 1 — 18.2TB usable |
-| Router | Ubiquiti EdgeRouter X | Handles all routing; Nighthawk demoted to AP |
+| Router | Ubiquiti EdgeRouter 4 | Handles all routing; Nighthawk demoted to AP |
 | WiFi | NetGear Nighthawk | Access point only |
 | Rack | GeekPi 8U mini rack | |
 | OS | Ubuntu Server 24.04 LTS | |
@@ -49,7 +49,7 @@ A self-hosted home server built on consumer and prosumer hardware, running conta
 
 ```
 ISP modem
-   └── Ubiquiti EdgeRouter X eth1 and eth2
+   └── Ubiquiti EdgeRouter 4 eth1 and eth2
         └──NetGear GS308e (managed switch — dot1q port assignments)
            ├── eth1 → VLAN 1 (native, 192.168.1.0/24) — main network
            │    ├── Lenovo ThinkCentre (Ubuntu Server — static IP)
@@ -75,7 +75,7 @@ Two VLANs segment the network between general use and lab-only traffic:
 | Main (native) | 1 | 192.168.1.0/24 | eth1 | General network — server, desktops, WiFi clients |
 | Lab | 20 | 192.168.2.0/24 | eth2 | Isolated lab segment — Raspberry Pi, lab devices |
 
-**EdgeRouter X configuration:** eth1 carries the native VLAN 1 for all general traffic. eth2 is dedicated to VLAN 20 — the lab-only segment.
+**EdgeRouter 4 configuration:** eth1 carries the native VLAN 1 for all general traffic. eth2 is dedicated to VLAN 20 — the lab-only segment.
 
 **GS308e configuration:** Specific switch ports assigned via dot1q tagging — VLAN 20 ports carry only lab traffic, isolating those devices from the main network. The GS308e's web interface handles port-based VLAN assignment without a CLI.
 
